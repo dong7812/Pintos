@@ -93,7 +93,8 @@ timer_sleep (int64_t ticks) {
 
 	ASSERT (intr_get_level () == INTR_ON);
 	
-	thread_sleep(start + ticks);
+	thread_sleep_sort(start + ticks);
+	// thread_sleep(start + ticks);
 	// while (timer_elapsed (start) < ticks)
 	// 	thread_yield ();
 }
@@ -127,7 +128,8 @@ static void
 timer_interrupt (struct intr_frame *args UNUSED) {
 	ticks++;
 	thread_tick ();
-	thread_awake(ticks);
+	thread_awake_sort(ticks);
+	// thread_awake(ticks);
 }
 
 /* LOOPS 반복이 하나 이상의 타이머 틱을 기다리면 true를 반환,

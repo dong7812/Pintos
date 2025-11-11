@@ -336,14 +336,12 @@ void thread_sleep_sort (int64_t wakeup_tick) {
 	enum intr_level old_level;
 
 	ASSERT (!intr_context ());
-// 이거 중요
 	old_level = intr_disable ();
 
 	curr->wakeup_tick = wakeup_tick;
 
 	list_insert_ordered(&sleep_list, &curr->elem, wakeup_tick_less, NULL);
 	thread_block();
-// 이거 중요
 	intr_set_level (old_level);
 }
 
@@ -405,12 +403,13 @@ void thread_awake(int64_t wakeup_tick) {
 인터럽트 컨텍스트, 쓰레드 컨텍스트 둘 모두에서 가능하다.
 */
 void thread_preemption(struct thread *thread) {
-	if (thread_get_priority() < thread->priority) {
-		if (intr_context()) {
-			intr_yield_on_return();
-		} else {
-			thread_yield();
-		}
+	if (thread_get_priority() >= thread->priority)
+		return ;
+
+	if (intr_context()) {
+		intr_yield_on_return();
+	} else {
+		thread_yield();
 	}
 }
 

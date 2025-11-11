@@ -252,35 +252,11 @@ lock_release (struct lock *lock) {
 	ASSERT (lock_held_by_current_thread (lock));	
 	enum intr_level old_level = intr_disable ();
 
-	remove_with_lock(lock);	// 현재 쓰레드의 락 보유 리스트에서 락 삭제하기
+	list_remove(&(lock->elem)); // 현재 쓰레드의 락 보유 리스트에서 락 삭제하기
 	refresh_priority();	// 현재 쓰레드의 우선순위 재조정
 
 	lock->holder = NULL;
 	sema_up (&lock->semaphore);
-	intr_set_level (old_level);
-}
-
-
-/*
-현재 쓰레드의 락 보유 리스트에서 현재 락 삭제하는 함수
-	1-1. 락 보유 리스트 전체 순회하기
-	1-2. 현재 락과 일치하는 락 있으면 삭제하기
-*/
-void remove_with_lock(struct lock *lock) {
-	enum intr_level old_level = intr_disable ();
-
-	int lock_list_size = list_size(&(thread_current()->lock_list));
-
-	for (int i=0; i < lock_list_size; i++) {
-		struct list_elem *element = list_pop_front(&(thread_current()->lock_list));
-
-		if (list_entry(element, struct lock, elem) == lock) { // 현재 락과 일치하는 락을 찾은 경우
-			break;
-		}
-
-		list_push_back(&(thread_current()->lock_list), element);
-	}
-
 	intr_set_level (old_level);
 }
 

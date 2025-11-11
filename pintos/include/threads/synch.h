@@ -29,7 +29,6 @@ bool lock_try_acquire (struct lock *);
 void lock_release (struct lock *);
 bool lock_held_by_current_thread (const struct lock *);
 
-void remove_with_lock(struct lock *lock);
 void refresh_priority(void);
 
 /* Condition variable. */

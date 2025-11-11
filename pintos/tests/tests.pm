@@ -588,9 +588,9 @@ sub finish {
     close (RESULT);
 
     if ($verdict eq 'PASS') {
-	print STDOUT "pass $test\n";
+	print STDOUT "\033[1;32mpass\033[0m \033[1;33m$test\033[0m\n";
     } else {
-	print STDOUT "FAIL $test\n";
+	print STDOUT "\033[1;31mFAIL\033[0m \033[1;33m$test\033[0m\n";
     }
     print STDOUT "$_\n" foreach @messages;
 

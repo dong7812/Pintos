@@ -31,6 +31,7 @@
 #include <string.h>
 #include "threads/interrupt.h"
 #include "threads/thread.h"
+#include <debug.h>
 
 /* Initializes semaphore SEMA to VALUE.  A semaphore is a
    nonnegative integer along with two atomic operators for
@@ -66,8 +67,9 @@ sema_down (struct semaphore *sema) {
 
 	old_level = intr_disable ();
 	while (sema->value == 0) {
-		list_push_back (&sema->waiters, &thread_current ()->elem);
-		thread_block ();
+		list_insert_ordered(&sema->waiters, &thread_current()->elem, priority_more, NULL);
+		thread_current()->waiting_list = &sema->waiters;
+		thread_block();
 	}
 	sema->value--;
 	intr_set_level (old_level);
@@ -107,12 +109,19 @@ sema_up (struct semaphore *sema) {
 	enum intr_level old_level;
 
 	ASSERT (sema != NULL);
+	struct thread *unblocked_thread = NULL;
 
 	old_level = intr_disable ();
-	if (!list_empty (&sema->waiters))
-		thread_unblock (list_entry (list_pop_front (&sema->waiters),
-					struct thread, elem));
+	if (!list_empty (&sema->waiters)) {
+		unblocked_thread = list_entry (list_pop_front (&sema->waiters), struct thread, elem);
+		thread_unblock(unblocked_thread);
+	} 
 	sema->value++;
+
+	if (unblocked_thread) {
+		thread_preemption(unblocked_thread);
+	}
+		
 	intr_set_level (old_level);
 }
 
@@ -188,8 +197,19 @@ lock_acquire (struct lock *lock) {
 	ASSERT (!intr_context ());
 	ASSERT (!lock_held_by_current_thread (lock));
 
+	enum intr_level old_level = intr_disable ();
+	thread_current()->waiting_lock = lock;
+
+	if (lock->holder != NULL) { // 이미 락 보유 쓰레드가 있을 때
+		thread_donate_priority(lock->holder); // 정렬 유지하면서 우선순위 기부하기
+	}
 	sema_down (&lock->semaphore);
+
 	lock->holder = thread_current ();
+	list_push_front(&(thread_current()->lock_list), &(lock->elem));
+	thread_current()->waiting_lock = NULL;
+
+	intr_set_level(old_level);
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -216,15 +236,81 @@ lock_try_acquire (struct lock *lock) {
 
    An interrupt handler cannot acquire a lock, so it does not
    make sense to try to release a lock within an interrupt
-   handler. */
+   handler. 
+   
+	1. 현재 쓰레드의 락 보유 리스트에서 현재 락 삭제하기
+		1-1. 락 보유 리스트 전체 순회하기
+		1-2. 현재 락과 일치하는 락 있으면 삭제하기
+
+	2. 현재 쓰레드 우선순위 재조정하기
+		2-1. 자신의 락 보유 리스트 전체 순회하면서 가장 큰 값 찾기
+		2-2. original_priority와 해당 값 비교해서 더 큰 값으로 priority 설정하기 (락 보유한 거 없으면 그냥 original_priority)
+*/
 void
 lock_release (struct lock *lock) {
 	ASSERT (lock != NULL);
-	ASSERT (lock_held_by_current_thread (lock));
+	ASSERT (lock_held_by_current_thread (lock));	
+	enum intr_level old_level = intr_disable ();
+
+	remove_with_lock(lock);	// 현재 쓰레드의 락 보유 리스트에서 락 삭제하기
+	refresh_priority();	// 현재 쓰레드의 우선순위 재조정
 
 	lock->holder = NULL;
 	sema_up (&lock->semaphore);
+	intr_set_level (old_level);
 }
+
+
+/*
+현재 쓰레드의 락 보유 리스트에서 현재 락 삭제하는 함수
+	1-1. 락 보유 리스트 전체 순회하기
+	1-2. 현재 락과 일치하는 락 있으면 삭제하기
+*/
+void remove_with_lock(struct lock *lock) {
+	enum intr_level old_level = intr_disable ();
+
+	int lock_list_size = list_size(&(thread_current()->lock_list));
+
+	for (int i=0; i < lock_list_size; i++) {
+		struct list_elem *element = list_pop_front(&(thread_current()->lock_list));
+
+		if (list_entry(element, struct lock, elem) == lock) { // 현재 락과 일치하는 락을 찾은 경우
+			break;
+		}
+
+		list_push_back(&(thread_current()->lock_list), element);
+	}
+
+	intr_set_level (old_level);
+}
+
+/*
+현재 쓰레드의 우선순위를 재조정하는 함수 (이 함수는 쓰레드의 lock이 변경되거나, 쓰레드의 우선순위가 변경되면 실행되어야 함)
+	2-1. 자신의 락 보유 리스트 전체 순회하면서 가장 큰 값 찾기
+	2-2. original_priority와 해당 값 비교해서 더 큰 값으로 priority 설정하기 (락 보유한 거 없으면 그냥 original_priority)
+*/
+void refresh_priority(void) {
+	enum intr_level old_level = intr_disable ();
+
+	int rescheduled_priority = thread_current()->original_priority;
+
+	struct list_elem *e;
+	for (e = list_begin (&(thread_current()->lock_list)); e != list_end (&(thread_current()->lock_list)); e = list_next(e)) {
+		struct lock *stored_lock = list_entry(e, struct lock, elem);	
+
+		if (!list_empty(&(stored_lock->semaphore.waiters))) {
+			struct thread *waiting_thread = list_entry(list_begin(&(stored_lock->semaphore.waiters)), struct thread, elem); 
+
+			if (waiting_thread->priority > rescheduled_priority) {
+				rescheduled_priority = waiting_thread->priority;
+			}
+		}
+	}
+
+	thread_current()->priority = rescheduled_priority;
+	intr_set_level (old_level);
+}
+
 
 /* Returns true if the current thread holds LOCK, false
    otherwise.  (Note that testing whether some other thread holds
@@ -240,6 +326,7 @@ lock_held_by_current_thread (const struct lock *lock) {
 struct semaphore_elem {
 	struct list_elem elem;              /* List element. */
 	struct semaphore semaphore;         /* This semaphore. */
+	int priority; 						/* priority of this semaphore */
 };
 
 /* Initializes condition variable COND.  A condition variable
@@ -282,10 +369,19 @@ cond_wait (struct condition *cond, struct lock *lock) {
 	ASSERT (lock_held_by_current_thread (lock));
 
 	sema_init (&waiter.semaphore, 0);
-	list_push_back (&cond->waiters, &waiter.elem);
+	waiter.priority = thread_current()->priority;
+
+	list_insert_ordered(&cond->waiters, &waiter.elem, sema_priorty_more, NULL);
 	lock_release (lock);
 	sema_down (&waiter.semaphore);
 	lock_acquire (lock);
+}
+
+bool sema_priorty_more(const struct list_elem *a, const struct list_elem *b, void *aux) {
+	struct semaphore_elem *sa = list_entry(a, struct semaphore_elem, elem);
+	struct semaphore_elem *sb = list_entry(b, struct semaphore_elem, elem);
+
+	return sa->priority > sb->priority;
 }
 
 /* If any threads are waiting on COND (protected by LOCK), then
@@ -303,8 +399,7 @@ cond_signal (struct condition *cond, struct lock *lock UNUSED) {
 	ASSERT (lock_held_by_current_thread (lock));
 
 	if (!list_empty (&cond->waiters))
-		sema_up (&list_entry (list_pop_front (&cond->waiters),
-					struct semaphore_elem, elem)->semaphore);
+		sema_up(&list_entry (list_pop_front (&cond->waiters), struct semaphore_elem, elem)->semaphore);
 }
 
 /* Wakes up all threads, if any, waiting on COND (protected by

@@ -67,6 +67,7 @@ static void schedule (void);
 static tid_t allocate_tid (void);
 
 bool wakeup_tick_less(const struct list_elem *a, const struct list_elem *b, void *aux);
+bool priority_more(const struct list_elem *a, const struct list_elem *b, void *aux);
 
 /* T가 유효한 스레드를 가리키는 것으로 보이면 true를 반환. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
@@ -207,6 +208,8 @@ thread_create (const char *name, int priority,
 	/* 실행 큐에 추가. */
 	thread_unblock (t);
 
+	/* 선점 구현 */
+	thread_preemption(list_entry(list_begin(&ready_list), struct thread, elem)); 
 	return tid;
 }
 
@@ -233,13 +236,12 @@ thread_block (void) {
 void
 thread_unblock (struct thread *t) {
 	enum intr_level old_level;
-
 	ASSERT (is_thread (t));
 
 	old_level = intr_disable ();
 	ASSERT (t->status == THREAD_BLOCKED);
-	list_push_back (&ready_list, &t->elem);
 	t->status = THREAD_READY;
+	list_insert_ordered (&ready_list, &t->elem, priority_more, NULL);
 	intr_set_level (old_level);
 }
 
@@ -303,7 +305,7 @@ thread_yield (void) {
 
 	old_level = intr_disable ();
 	if (curr != idle_thread)
-		list_push_back (&ready_list, &curr->elem);
+		list_insert_ordered (&ready_list, &curr->elem, priority_more, NULL);
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
@@ -353,6 +355,13 @@ bool wakeup_tick_less(const struct list_elem *a, const struct list_elem *b, void
 	return ta->wakeup_tick < tb->wakeup_tick;
 }
 
+bool priority_more(const struct list_elem *a, const struct list_elem *b, void *aux)
+{
+	struct thread *ta = list_entry(a, struct thread, elem);
+	struct thread *tb = list_entry(b, struct thread, elem);
+	return ta->priority > tb->priority;
+}
+
 // 20251107
 /*block 상태에 있는 thread wakeup*/
 void thread_awake_sort(int64_t wakeup_tick)
@@ -374,14 +383,14 @@ void thread_awake_sort(int64_t wakeup_tick)
 
 // 20251107
 /*block 상태에 있는 thread wakeup*/ 
-void thread_awake(int64_t wakeup_tick){
+void thread_awake(int64_t wakeup_tick) {
 	if(list_empty (&sleep_list))
 		return;
 
 	// 현재 리스트 크기
     int size = list_size(&sleep_list);  
 
-    for(int i = 0; i < size; i++){
+    for (int i = 0; i < size; i++){
         struct thread *t = list_entry(list_pop_front(&sleep_list), struct thread, elem);
         if(t->wakeup_tick <= wakeup_tick){
             thread_unblock(t);
@@ -391,10 +400,60 @@ void thread_awake(int64_t wakeup_tick){
     }
 }
 
+/* 
+주어진 쓰레드가 선점할 수 있는지 확인하고, 선점할 수 있으면 선점한다.
+인터럽트 컨텍스트, 쓰레드 컨텍스트 둘 모두에서 가능하다.
+*/
+void thread_preemption(struct thread *thread) {
+	if (thread_get_priority() < thread->priority) {
+		if (intr_context()) {
+			intr_yield_on_return();
+		} else {
+			thread_yield();
+		}
+	}
+}
+
+/* 
+현재 쓰레드가 주어진 쓰레드에게 우선순위를 기부하는 함수 
+외부 인터럽트 컨텍스트에서 실행될 수 없다.
+*/
+void thread_donate_priority(struct thread *thread) {
+	ASSERT (!intr_context ());
+	enum intr_level old_level = intr_disable ();
+
+	int depth = 0;
+
+	while (depth < 8) {
+		if (thread->priority < thread_get_priority()) {
+			thread->priority = thread_get_priority(); // 우선순위 기부
+
+			if (thread->status == THREAD_READY) {
+				list_remove(&(thread->elem));
+				list_insert_ordered(&ready_list, &(thread->elem), priority_more, NULL);
+			} else if (thread->status == THREAD_BLOCKED) {
+				list_remove(&(thread->elem));
+				list_insert_ordered(thread->waiting_list, &(thread->elem), priority_more, NULL);
+			}
+		}
+
+		if (!thread->waiting_lock) {
+			break;
+		}
+
+		thread = thread->waiting_lock->holder;
+		depth++;
+	}
+
+	intr_set_level(old_level);
+}
+
 /* 현재 스레드의 우선순위를 NEW_PRIORITY로 설정. */
 void
 thread_set_priority (int new_priority) {
-	thread_current ()->priority = new_priority;
+	thread_current ()->original_priority = new_priority;
+	refresh_priority();
+	thread_preemption(list_entry(list_begin (&ready_list), struct thread, elem));
 }
 
 /* 현재 스레드의 우선순위를 반환. */
@@ -488,6 +547,10 @@ init_thread (struct thread *t, const char *name, int priority) {
 	t->tf.rsp = (uint64_t) t + PGSIZE - sizeof (void *);
 	t->priority = priority;
 	t->magic = THREAD_MAGIC;
+	t->original_priority = priority;
+	t->waiting_lock = NULL;
+	t->waiting_list = NULL;
+	list_init(&t->lock_list);
 }
 
 /* 스케줄될 다음 스레드를 선택하여 반환. 실행 큐가 비어있지 않다면

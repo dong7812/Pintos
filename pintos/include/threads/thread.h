@@ -89,6 +89,11 @@ struct thread {
 	/* thread.c와 synch.c가 공유함. */
 	struct list_elem elem;              /* 리스트 요소. */
 
+	struct list lock_list; 				/* 현재 쓰레드가 보유하고 있는 락 리스트 */
+	int original_priority; 	 			/* 쓰레드의 원래 우선순위 (백업용으로 저장, 수정 X) */
+	struct lock *waiting_lock;			/* 현재 쓰레드가 기다리고 있는 lock */
+	struct list *waiting_list; 			/* 현재 쓰레드가 block 되어서 대기하고 있는 리스트의 위치 */
+
 #ifdef USERPROG
 	/* userprog/process.c가 소유함. */
 	uint64_t *pml4;                     /* 페이지 맵 레벨 4 */
@@ -110,6 +115,8 @@ struct thread {
    true이면 다단계 피드백 큐 스케줄러 사용.
    커널 커맨드라인 옵션 "-o mlfqs"로 제어됨. */
 extern bool thread_mlfqs;
+
+bool priority_more(const struct list_elem *a, const struct list_elem *b, void *aux);
 
 void thread_init (void);
 void thread_start (void);
@@ -145,4 +152,7 @@ void thread_awake (int64_t wakeup_tick);
 
 void thread_sleep_sort (int64_t time_tick);
 void thread_awake_sort (int64_t wakeup_tick);
+
+void thread_preemption(struct thread *thread);
+void thread_donate_priority(struct thread *thread);
 #endif /* threads/thread.h */

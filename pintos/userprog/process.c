@@ -20,6 +20,7 @@
 #include "intrinsic.h"
 #ifdef VM
 #include "vm/vm.h"
+#include "synch.h"
 #endif
 
 static void process_cleanup (void);
@@ -43,6 +44,7 @@ process_init (void) {
 tid_t
 process_create_initd (const char *file_name) {
 	char *fn_copy;
+	char *fn_copy2;
 	tid_t tid;
 
 	/* Make a copy of FILE_NAME.
@@ -52,12 +54,23 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
-	char *program, *save_ptr;
+	// 프로그램 이름 추출용 복사본
+	fn_copy2 = palloc_get_page (0);
+	if (fn_copy2 == NULL) {
+		palloc_free_page(fn_copy);
+		return TID_ERROR;
+	}
+	strlcpy (fn_copy2, file_name, PGSIZE);
 
-	// 파싱: argv 배열에 토큰들 저장
-	program = strtok_r(fn_copy, " ", &save_ptr);
+	char *program, *save_ptr;
+	program = strtok_r(fn_copy2, " ", &save_ptr);
+
 	/* Create a new thread to execute FILE_NAME. */
 	tid = thread_create (program, PRI_DEFAULT, initd, fn_copy);
+
+	// 파싱용 복사본은 바로 해제
+	palloc_free_page(fn_copy2);
+
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -207,22 +220,50 @@ process_exec (void *f_name) {
  * does nothing. */
 int
 process_wait (tid_t child_tid UNUSED) {
-	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
-	 * XXX:       to add infinite loop here before
-	 * XXX:       implementing the process_wait. */
-	for (;;);
-	return -1;
+	struct thread *curr = thread_current();
+    struct thread *child = NULL;
+    struct list temp_list;
+    
+	list_init(&temp_list);
+
+    // pop_front로 하나씩 꺼내면서 찾기
+    while (!list_empty(&curr->child_list)) {
+        struct list_elem *e = list_pop_front(&curr->child_list);
+        struct thread *t = list_entry(e, struct thread, child_elem);
+
+        if (t->tid == child_tid) {
+            // 찾았다!
+        	child = t;
+        	break;
+        } else {
+            // 아니면 임시 리스트에 보관
+            list_push_back(&temp_list, e);
+        }
+    }
+
+      // 임시 리스트 요소들 다시 원래 리스트로 복원
+    while (!list_empty(&temp_list)) {
+        list_push_back(&curr->child_list, list_pop_front(&temp_list));
+    }
+
+    if (child == NULL) {
+        return -1;
+    }
+
+	sema_down(&child->wait_sema);
+	
+    return child->exit_status;
 }
 
 /* Exit the process. This function is called by thread_exit (). */
 void
 process_exit (void) {
 	struct thread *curr = thread_current ();
-	/* TODO: Your code goes here.
-	 * TODO: Implement process termination message (see
-	 * TODO: project2/process_termination.html).
-	 * TODO: We recommend you to implement process resource cleanup here. */
 
+	// Process termination message
+	printf("%s: exit(%d)\n", curr->name, curr->exit_status);
+
+	sema_up(&curr->wait_sema);
 	process_cleanup ();
 }
 

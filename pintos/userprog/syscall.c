@@ -49,8 +49,10 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		break;
 
 	case SYS_EXIT:
-          thread_exit();
-          break;
+		thread_current()->exit_status = f->R.rdi;
+        thread_exit();
+        break;
+		
 	default:
 		break;
 	}

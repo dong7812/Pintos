@@ -17,10 +17,11 @@ void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
 static void halt(void);
 static int write (int fd, const void *buffer, unsigned length);
-static int create(const char *file, unsigned initial_size);
+static bool create(const char *file, unsigned initial_size);
 static void exit(int status);
 static int open(const char *file);
 static void check_valid_access(void *uaddr);
+static void close(int fd);
 
 /* System call.
  *
@@ -35,6 +36,8 @@ static void check_valid_access(void *uaddr);
 #define MSR_LSTAR 0xc0000082        /* Long mode SYSCALL target */
 #define MSR_SYSCALL_MASK 0xc0000084 /* Mask for the eflags */
 
+struct lock filesys_lock;
+
 void
 syscall_init (void) {
 	write_msr(MSR_STAR, ((uint64_t)SEL_UCSEG - 0x10) << 48  |
@@ -46,6 +49,7 @@ syscall_init (void) {
 	 * mode stack. Therefore, we masked the FLAG_FL. */
 	write_msr(MSR_SYSCALL_MASK,
 			FLAG_IF | FLAG_TF | FLAG_DF | FLAG_IOPL | FLAG_AC | FLAG_NT);
+	lock_init(&filesys_lock);
 }
 
 /* The main system call interface */
@@ -65,7 +69,6 @@ syscall_handler (struct intr_frame *f UNUSED) {
 
 		case SYS_EXIT:
 			exit((int) f -> R.rdi);
-
         	break;
 
 		case SYS_CREATE:
@@ -76,6 +79,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			f -> R.rax = open((const char *) f -> R.rdi);
 			break;
 
+		case SYS_CLOSE:
+			close((int) f -> R.rdi);
+			break;
 
 		default:
 			exit(-1);
@@ -104,15 +110,20 @@ write (int fd, const void *buffer, unsigned length){
 	return -1;
 };
 
-static int 
+static bool 
 create(const char *file, unsigned initial_size){
 	check_valid_access(file);
-
-	bool result = filesys_create(file, initial_size);
-	if(!result || strlen(file) > 14){
-		return 0;
+	if(strlen(file) > 14){
+		return false;
 	}
-	return 1;
+
+	lock_acquire(&filesys_lock);
+	bool result = filesys_create(file, initial_size);
+	lock_release(&filesys_lock);
+	if(!result){
+		return false;
+	}
+	return true;
 }
 
 /* 파일 식별자로 변환하고 식별자 번호를 리턴한다. */
@@ -120,23 +131,37 @@ static int
 open(const char *file){
 	check_valid_access(file);
 	struct thread *cur = thread_current();
-	int fd = cur -> fd;
-	if(fd >= MAX_FD || file == NULL){
-		return -1;
-	}
+
 	char *fn_copy = palloc_get_page(0);
 	if(fn_copy == NULL){
 		return -1;
 	}
 	strlcpy(fn_copy, file, PGSIZE);
 
+	
+	lock_acquire(&filesys_lock);
 	struct file *new_file = filesys_open(fn_copy);
+	lock_release(&filesys_lock);
+
+
 	if(!new_file){
 		palloc_free_page(fn_copy);
 		return -1;
 	}
-	cur -> fd_table[fd] = new_file;
-	cur -> fd = fd + 1;
+
+	int fd = -1;
+
+	for (int i = 2; i < MAX_FD; i++)
+	{
+		if(cur -> fd_table[i] == NULL){
+			cur -> fd_table[i] = new_file;
+			fd = i;
+			break;
+		}
+	}
+
+	if(fd < 0) file_close(new_file);
+
 	palloc_free_page(fn_copy);
 	return fd;
 }
@@ -147,4 +172,17 @@ check_valid_access(void *uaddr){
 	if(uaddr == NULL) exit(-1);
 	if(pml4_get_page(cur -> pml4, uaddr) == NULL) exit(-1);
 	if(!is_user_vaddr(uaddr)) exit(-1);
+}
+
+static void close(int fd){
+	if(fd < 2 || fd >= MAX_FD){
+		return;
+	}
+	struct thread *cur = thread_current();
+	if(cur -> fd_table[fd] != NULL){
+		lock_acquire(&filesys_lock);
+		file_close(cur -> fd_table[fd]);
+		lock_release(&filesys_lock);
+		cur -> fd_table[fd] = NULL;
+	}
 }

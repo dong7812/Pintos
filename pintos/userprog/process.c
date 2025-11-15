@@ -1,4 +1,5 @@
 #include "userprog/process.h"
+#include "userprog/syscall.h"
 #include <debug.h>
 #include <inttypes.h>
 #include <round.h>
@@ -34,6 +35,14 @@ static void argument_passing(char *argv[], int argc, struct intr_frame *frame);
 static void
 process_init (void) {
 	struct thread *current = thread_current ();
+	current -> fd_table = malloc(sizeof (struct file *) * MAX_FD);
+	if(current -> fd_table == NULL){
+		PANIC("fd_table allocation failed");
+	}
+	for(int i = 0; i < MAX_FD; i++){
+		current -> fd_table[i] = NULL;
+	}
+	current -> fd = 2;
 }
 
 /* Starts the first userland program, called "initd", loaded from FILE_NAME.
@@ -251,8 +260,19 @@ process_exit (void) {
 
 	// Process termination message
 	printf("%s: exit(%d)\n", curr->name, curr->exit_status);
-
 	sema_up(&curr->wait_sema);
+
+	if(curr -> fd_table != NULL){
+		for(int i = 0; i < MAX_FD; i++){
+			if(curr -> fd_table[i] != NULL){
+				lock_acquire(&filesys_lock);
+				file_close(curr -> fd_table[i]);
+				lock_release(&filesys_lock);
+			}
+		}
+		free(curr -> fd_table);
+		curr -> fd_table = NULL;
+	}
 	process_cleanup ();
 }
 
@@ -264,7 +284,6 @@ process_cleanup (void) {
 #ifdef VM
 	supplemental_page_table_kill (&curr->spt);
 #endif
-
 	uint64_t *pml4;
 	/* Destroy the current process's page directory and switch back
 	 * to the kernel-only page directory. */
@@ -479,7 +498,12 @@ load (const char *file_name, struct intr_frame *if_) {
 
 done:
 	/* We arrive here whether the load is successful or not. */
-	file_close (file);
+	if(file != NULL){
+		file_close(file);
+	}
+	if(fn_copy != NULL){
+		palloc_free_page(fn_copy);
+	}
 	return success;
 }
 

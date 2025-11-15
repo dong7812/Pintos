@@ -27,6 +27,8 @@ static bool load (const char *file_name, struct intr_frame *if_);
 static void initd (void *f_name);
 static void __do_fork (void *);
 
+static void argument_passing(char *argv[], int argc, struct intr_frame *frame);
+
 /* General process initializer for initd and other process. */
 static void
 process_init (void) {
@@ -50,8 +52,12 @@ process_create_initd (const char *file_name) {
 		return TID_ERROR;
 	strlcpy (fn_copy, file_name, PGSIZE);
 
+	char *program, *save_ptr;
+
+	// 파싱: argv 배열에 토큰들 저장
+	program = strtok_r(fn_copy, " ", &save_ptr);
 	/* Create a new thread to execute FILE_NAME. */
-	tid = thread_create (file_name, PRI_DEFAULT, initd, fn_copy);
+	tid = thread_create (program, PRI_DEFAULT, initd, fn_copy);
 	if (tid == TID_ERROR)
 		palloc_free_page (fn_copy);
 	return tid;
@@ -204,6 +210,7 @@ process_wait (tid_t child_tid UNUSED) {
 	/* XXX: Hint) The pintos exit if process_wait (initd), we recommend you
 	 * XXX:       to add infinite loop here before
 	 * XXX:       implementing the process_wait. */
+	for (;;);
 	return -1;
 }
 
@@ -329,6 +336,26 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
+	// 일단 file_name이 들어오면 copy해서 parsing해보자
+	// palloc으로 file name이 들어가는 single page 하나 생성
+	char *fn_copy = palloc_get_page(0);
+
+	if (fn_copy == NULL)
+		return false;
+
+	// pintos는 보안 이슈로 strcpy 사용 불가
+	strlcpy(fn_copy, file_name, PGSIZE);
+
+	char *argv[128];
+	int argc = 0;
+	char *token, *save_ptr;
+
+	// 파싱: argv 배열에 토큰들 저장
+	for (token = strtok_r(fn_copy, " ", &save_ptr); token != NULL;
+	     token = strtok_r(NULL, " ", &save_ptr)) {
+		argv[argc++] = token;
+	}
+
 	/* Allocate and activate page directory. */
 	t->pml4 = pml4_create ();
 	if (t->pml4 == NULL)
@@ -336,9 +363,9 @@ load (const char *file_name, struct intr_frame *if_) {
 	process_activate (thread_current ());
 
 	/* Open executable file. */
-	file = filesys_open (file_name);
+	file = filesys_open (argv[0]);
 	if (file == NULL) {
-		printf ("load: %s: open failed\n", file_name);
+		printf ("load: %s: open failed\n", argv[0]);
 		goto done;
 	}
 
@@ -416,6 +443,7 @@ load (const char *file_name, struct intr_frame *if_) {
 
 	/* TODO: Your code goes here.
 	 * TODO: Implement argument passing (see project2/argument_passing.html). */
+	argument_passing(argv, argc, if_);
 
 	success = true;
 
@@ -423,6 +451,46 @@ done:
 	/* We arrive here whether the load is successful or not. */
 	file_close (file);
 	return success;
+}
+
+void argument_passing(char *argv[], int argc, struct intr_frame *frame){
+	// 인자 주소들을 저장할 배열
+	char *arg_addresses[128];
+
+	// 인자 문자열들을 스택에 push (역순)
+	for (int i = argc - 1; i >= 0; i--) {
+		int len = strlen(argv[i]) + 1;
+		// 공간 확보 : 여기 len 바이트만큼 공간 쓸게
+		frame->rsp -= len;
+		// 실제 데이터 삽입
+		memcpy(frame->rsp, argv[i], len);
+        arg_addresses[i] = frame->rsp;
+	}
+
+	while(frame->rsp % 8 != 0){
+		frame->rsp--;
+	}
+
+	// 64bit 설정이기에 8byte단위의 레지스터 설정
+	// argv[argc] = NULL
+	frame->rsp -= 8;
+	*(uint64_t *)frame->rsp = 0;
+
+    // argv[i] 포인터들 push (역순)
+    for (int i = argc - 1; i >= 0; i--) {
+          frame->rsp -= 8;
+          *(uint64_t *)frame->rsp = (uint64_t)arg_addresses[i];
+    }
+
+    // return address (fake) 
+	// argv[argc] = NULL
+    frame->rsp -= 8;
+    *(uint64_t *)frame->rsp = 0;
+
+    // rdi(argc), rsi(argv) 설정
+    frame->R.rdi = argc;
+	// argv 배열의 시작 주소
+    frame->R.rsi = frame->rsp + 8;
 }
 
 

@@ -7,6 +7,7 @@
 #include "userprog/gdt.h"
 #include "threads/flags.h"
 #include "intrinsic.h"
+#include "threads/init.h"
 
 void syscall_entry (void);
 void syscall_handler (struct intr_frame *);
@@ -52,10 +53,18 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		thread_current()->exit_status = f->R.rdi;
         thread_exit();
         break;
-		
+
+	case SYS_HALT:
+		halt();
+
 	default:
 		break;
 	}
+}
+
+
+void halt (void){
+	power_off();
 }
 
 int write (int fd, const void *buffer, unsigned length){

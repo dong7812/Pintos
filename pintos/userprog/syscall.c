@@ -61,9 +61,13 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		/* code */
 		f->R.rax = write(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
-	
+
 	case SYS_HALT:
 		halt();
+		break;
+	
+	case SYS_CREATE:
+		f->R.rax = create(file, (unsigned)f->R.rsi);
 		break;
 
 	case SYS_OPEN:
@@ -100,6 +104,15 @@ void halt (void){
 	power_off();
 };
 
+bool create(const char *file, unsigned initial_size) {
+    // NULL이거나 커널 영역이면 종료
+    if (file == NULL || !is_user_vaddr(file)) {
+        exit(-1);
+    }
+
+    // 정상 케이스
+	return filesys_create(file, initial_size);
+}
 
 int write (int fd, const void *buffer, unsigned length){
 	if(fd == 1 || fd == 2){

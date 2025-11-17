@@ -23,6 +23,7 @@ int write(int fd, const void *buffer, unsigned length);
 int open(const char *file);
 int read (int fd, void *buffer, unsigned length);
 int filesize(int fd);
+void close (int fd);
 
 /* System call.
  *
@@ -87,16 +88,25 @@ syscall_handler (struct intr_frame *f UNUSED) {
 	case SYS_FILESIZE:
 		f-> R.rax = filesize(f -> R.rdi);
 		break;
+	
+	case SYS_CLOSE:
+		close(f -> R.rdi);
+		break;
+
+	default:
+		break;
 	}
 }
 
 int open (const char *file){
-	if (pml4_get_page(thread_current()->pml4, file) == NULL) {
-		exit(-1);
-	}
 	if (file == NULL || !is_user_vaddr(file)) {
         exit(-1);
     }
+	
+	if (pml4_get_page(thread_current()->pml4, file) == NULL) {
+		exit(-1);
+	}
+	
 	struct thread *curr = thread_current();
 	struct file *opened_file = filesys_open(file);
 
@@ -126,12 +136,12 @@ void exit (int status){
 bool create(const char *file, unsigned initial_size) {
     // NULL이거나 커널 영역이면 종료
 	// bad ptr -> pml4 valideate 판독해야됌 귀찮음
+	if (file == NULL || !is_user_vaddr(file)) {
+        exit(-1);
+    }
 	if (pml4_get_page(thread_current()->pml4, file) == NULL){
 		exit(-1);
 	}
-    if (file == NULL || !is_user_vaddr(file)) {
-        exit(-1);
-    }
 
     // 정상 케이스
 	return filesys_create(file, initial_size);
@@ -139,17 +149,17 @@ bool create(const char *file, unsigned initial_size) {
 
 int read (int fd, void *buffer, unsigned length){
 	struct thread *curr = thread_current();
-	if (pml4_get_page(thread_current()->pml4, buffer) == NULL) {
-		exit(-1);
-	}
-
 	if (!is_user_vaddr(buffer)) {
         exit(-1);
     }
 
+	if (pml4_get_page(thread_current()->pml4, buffer) == NULL) {
+		exit(-1);
+	}
+
 	if (fd == 0){
 		for(int i=0; i <length; i++){
-			((char *)buffer)[0] = input_getc();
+			((char *)buffer)[i] = input_getc();
 		}
 		return length;
 	}else{
@@ -165,13 +175,13 @@ int read (int fd, void *buffer, unsigned length){
 
 int write (int fd, const void *buffer, unsigned length){
 	struct thread *curr = thread_current();
-	if (pml4_get_page(thread_current()->pml4, buffer) == NULL) {
-		exit(-1);
-	}
-	
 	if(!is_user_vaddr(buffer)) {
         	exit(-1);
     }
+
+	if (pml4_get_page(thread_current()->pml4, buffer) == NULL) {
+		exit(-1);
+	}
 
 	if(fd == 1 || fd == 2){
 		putbuf(buffer, length);
@@ -197,3 +207,19 @@ int filesize(int fd){
 
 	return file_length(file);
 }
+
+void close (int fd){
+	if(fd < 3 || fd > 64){
+		exit(-1);
+	}
+	struct thread *curr = thread_current();
+	struct file *file = curr->fdt[fd];
+
+	if (file == NULL) {  // 이미 닫힌 파일
+    	exit(-1);
+    }
+
+	file_close(file);
+
+	curr->fdt[fd] = NULL;
+};

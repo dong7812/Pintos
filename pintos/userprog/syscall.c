@@ -62,6 +62,11 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		f->R.rax = write(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 
+	case SYS_EXIT:
+		int status = f->R.rdi;
+		exit(status);
+        break;
+	
 	case SYS_HALT:
 		halt();
 		break;
@@ -102,6 +107,11 @@ int open (const char *file){
 
 void halt (void){
 	power_off();
+};
+
+void exit (int status){
+	thread_current()->exit_status = status;
+    thread_exit();
 };
 
 bool create(const char *file, unsigned initial_size) {

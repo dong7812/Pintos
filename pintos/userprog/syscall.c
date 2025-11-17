@@ -22,6 +22,7 @@ bool create(const char *file, unsigned initial_size);
 int write(int fd, const void *buffer, unsigned length);
 int open(const char *file);
 int read (int fd, void *buffer, unsigned length);
+int filesize(int fd);
 
 /* System call.
  *
@@ -83,7 +84,8 @@ syscall_handler (struct intr_frame *f UNUSED) {
 		f->R.rax = read(f->R.rdi, f->R.rsi, f->R.rdx);
 		break;
 
-	default:
+	case SYS_FILESIZE:
+		f-> R.rax = filesize(f -> R.rdi);
 		break;
 	}
 }
@@ -173,3 +175,13 @@ int write (int fd, const void *buffer, unsigned length){
 
 	return 0;
 };
+
+int filesize(int fd){
+	if(fd < 2 || fd > 64){
+		exit(-1);
+	}
+	struct thread *curr = thread_current();
+	struct file *file = curr->fdt[fd];
+
+	return file_length(file);
+}

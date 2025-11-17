@@ -91,6 +91,9 @@ syscall_handler (struct intr_frame *f UNUSED) {
 }
 
 int open (const char *file){
+	if (pml4_get_page(thread_current()->pml4, file) == NULL) {
+		exit(-1);
+	}
 	if (file == NULL || !is_user_vaddr(file)) {
         exit(-1);
     }
@@ -123,6 +126,9 @@ void exit (int status){
 bool create(const char *file, unsigned initial_size) {
     // NULL이거나 커널 영역이면 종료
 	// bad ptr -> pml4 valideate 판독해야됌 귀찮음
+	if (pml4_get_page(thread_current()->pml4, file) == NULL){
+		exit(-1);
+	}
     if (file == NULL || !is_user_vaddr(file)) {
         exit(-1);
     }
@@ -133,6 +139,9 @@ bool create(const char *file, unsigned initial_size) {
 
 int read (int fd, void *buffer, unsigned length){
 	struct thread *curr = thread_current();
+	if (pml4_get_page(thread_current()->pml4, buffer) == NULL) {
+		exit(-1);
+	}
 
 	if (!is_user_vaddr(buffer)) {
         exit(-1);
@@ -156,7 +165,10 @@ int read (int fd, void *buffer, unsigned length){
 
 int write (int fd, const void *buffer, unsigned length){
 	struct thread *curr = thread_current();
-
+	if (pml4_get_page(thread_current()->pml4, buffer) == NULL) {
+		exit(-1);
+	}
+	
 	if(!is_user_vaddr(buffer)) {
         	exit(-1);
     }

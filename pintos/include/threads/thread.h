@@ -109,7 +109,6 @@ struct thread {
 	struct list_elem child_elem;        // 자식 리스트의 요소
 
 	struct file **fd_table; 			// file descriptor table (one table per process)
-	int fd; 							// 시작할 descriptor 번호 (0, 1은 예약되어 있음)
 #endif
 #ifdef VM
 	/* 스레드가 소유한 전체 가상 메모리를 위한 테이블. */

@@ -25,6 +25,7 @@ static void check_valid_access(void *uaddr);
 static void close(int fd);
 static int read(int fd, void *buffer, unsigned size);
 static int filesize(int fd);
+//static bool check_buffer(void *buffer, int length);
 static int64_t get_user(const uint8_t *uadder);
 static bool put_user(uint8_t *udst, uint8_t byte); 
 
@@ -260,6 +261,18 @@ read(int fd, void *buffer, unsigned size){
 		return bytes_read;
 	}
 }
+
+/* TODO : 혹시 시작 주소 다음 바이트에 문제가 생기면 사용하기 */
+// static bool check_buffer(void *buffer, int length) {
+//     for (int i = 0; i < length; i++) {
+//         void *current_addr = ((char *)buffer) + i;
+//         if (check_addr(current_addr) == false) {
+//             return false;
+//         }
+//     }
+//     return true;
+// }
+
 
 /* Reads a byte at user virtual address UADDR.
  * UADDR must be below KERN_BASE.

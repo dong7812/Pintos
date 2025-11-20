@@ -30,6 +30,7 @@ static int wait (tid_t pid);
 static tid_t fork (const char *thread_name, struct intr_frame *if_);
 static int exec (const char *file);
 static void seek (int fd, unsigned position);
+static bool remove (const char *file);
 //static bool check_buffer(void *buffer, int length);
 static int64_t get_user(const uint8_t *uadder);
 static bool put_user(uint8_t *udst, uint8_t byte);
@@ -120,13 +121,22 @@ syscall_handler (struct intr_frame *f UNUSED) {
 			break;
 
 		case SYS_REMOVE:
-
+			f -> R.rax = remove((const char *) f->R.rdi);
+			break;
+		
 		default:
 			printf("%d", syscall_num); 
 			exit(-1);
 			break;
 	}
 }
+
+static bool
+remove (const char *file){
+	bool result = filesys_remove(file);
+	return result;
+};
+
 static void
 seek (int fd, unsigned position){
 	struct thread *cur = thread_current();

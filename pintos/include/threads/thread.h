@@ -113,6 +113,7 @@ struct thread {
 	bool waited;                        // 이미 wait 되었는지 여부
 	struct intr_frame *parent_if;       // fork 시 부모의 interrupt frame (포인터)
 	struct file **fd_table; 			// file descriptor table (one table per process)
+	struct file *close_file;		// deny 권한 설정을 위해서 바로 close하지 않고 file을 thread에 저장
 #endif
 #ifdef VM
 	/* 스레드가 소유한 전체 가상 메모리를 위한 테이블. */

@@ -342,6 +342,11 @@ process_exit (void) {
 		free(curr -> fd_table);
 		curr -> fd_table = NULL;
 	}
+
+	if(curr -> close_file != NULL){
+		file_close(curr -> close_file);
+	}
+
 	process_cleanup ();
 }
 
@@ -572,7 +577,9 @@ load (const char *file_name, struct intr_frame *if_) {
 done:
 	/* We arrive here whether the load is successful or not. */
 	if(file != NULL){
-		file_close(file);
+		// file_close(file);
+		file_deny_write(file);
+		thread_current()->close_file = file;
 	}
 	if(fn_copy != NULL){
 		palloc_free_page(fn_copy);

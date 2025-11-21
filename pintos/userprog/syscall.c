@@ -263,8 +263,8 @@ static void
 check_valid_access(void *uaddr){
 	struct thread *cur = thread_current();
 	if(uaddr == NULL) exit(-1);
-	if(pml4_get_page(cur -> pml4, uaddr) == NULL) exit(-1);
 	if(!is_user_vaddr(uaddr)) exit(-1);
+	if(pml4_get_page(cur -> pml4, uaddr) == NULL) exit(-1);
 }
 
 static void 

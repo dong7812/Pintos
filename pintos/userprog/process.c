@@ -179,7 +179,6 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
  * Hint) parent->tf does not hold the userland context of the process.
  *       That is, you are required to pass second argument of process_fork to
  *       this function. */
-static void
 __do_fork (void *aux) {
 	struct intr_frame if_;
 	struct thread *parent = (struct thread *) aux;
@@ -233,6 +232,7 @@ __do_fork (void *aux) {
 error:
 	parent->fork_success = false;
 	sema_up(&parent->fork_sema);
+	current->parent = NULL;
 	thread_exit ();
 }
 

@@ -136,7 +136,8 @@ halt(void){
 
 static void
 exit(int status){
-	thread_current()-> exit_status = status;
+	struct thread *cur = thread_current();
+	cur -> exit_status = status;
     thread_exit();
 }
 
@@ -197,8 +198,8 @@ open(const char *file){
 	lock_release(&filesys_lock);
 
 
-	if(!new_file){
-		palloc_free_page(fn_copy);
+	palloc_free_page(fn_copy);
+	if(new_file == NULL){
 		return -1;
 	}
 
@@ -219,7 +220,6 @@ open(const char *file){
 		lock_release(&filesys_lock);
 	}
 
-	palloc_free_page(fn_copy);
 	return fd;
 }
 
@@ -230,8 +230,8 @@ static void
 check_valid_access(void *uaddr){
 	struct thread *cur = thread_current();
 	if(uaddr == NULL) exit(-1);
-	if(pml4_get_page(cur -> pml4, uaddr) == NULL) exit(-1);
 	if(!is_user_vaddr(uaddr)) exit(-1);
+	if(pml4_get_page(cur -> pml4, uaddr) == NULL) exit(-1);
 }
 
 static void 
@@ -298,6 +298,7 @@ static int exec(const char *cmd_line){
 	if(cm_copy == NULL) return -1;
 	strlcpy(cm_copy, cmd_line, PGSIZE);
 	return process_exec(cm_copy);
+	
 }
 
 static int wait(tid_t pid){
@@ -331,7 +332,7 @@ static bool remove(const char *file){
 // static bool check_buffer(void *buffer, int length) {
 //     for (int i = 0; i < length; i++) {
 //         void *current_addr = ((char *)buffer) + i;
-//         if (check_addr(current_addr) == false) {
+//         if (check_valid_access(current_addr) == false) {
 //             return false;
 //         }
 //     }

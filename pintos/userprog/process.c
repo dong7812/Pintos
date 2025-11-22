@@ -202,33 +202,28 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
 	void *newpage;
 	bool writable;
 
-	/* 1. TODO: If the parent_page is kernel page, then return immediately. */
+	/* 1. 커널 페이지는 복사 제외(이미 포함되어 있음) */
 	if(is_kernel_vaddr(va)) return true;
 
-	/* 2. Resolve VA from the parent's page map level 4. */
-	/* TODO: 로직 개선 가능 문제 -> pte로 parent page를 가져올 수 있나?*/
+	/* 2. pte에 이미 부모의 페이지가 있음 -> 물리 페이지 주소를 가상 주소로 변환  */
 	void* paddr = pte_get_paddr(pte);
 	parent_page = ptov(paddr);	
 	// parent_page = pml4_get_page (parent->pml4, va);
 
-	/* 3. TODO: Allocate new PAL_USER page for the child and set result to
-	 *    TODO: NEWPAGE. */
+	/* 3. 유저 공간을 위한 새로운 페이지 만들기 */
 	newpage = palloc_get_page(PAL_USER | PAL_ZERO);
 	if(newpage == NULL){
 		return false;   
 	}
 
-	/* 4. TODO: Duplicate parent's page to the new page and
-	 *    TODO: check whether parent's page is writable or not (set WRITABLE
-	 *    TODO: according to the result). */
+	/* 4. 부모의 유저 페이지를 그대로 새로운 페이지로 복사 (단, 쓰기 가능 여부 플래그도 같이 복사해야 함)*/
 	memcpy(newpage, parent_page, PGSIZE);
 	writable = is_writable(pte);
 
 
-	/* 5. Add new page to child's page table at address VA with WRITABLE
-	 *    permission. */
+	/* 5. 새로 복사한 페이지를 페이지 테이블에 설정 */
 	if (!pml4_set_page (current->pml4, va, newpage, writable)) {
-		/* 6. TODO: if fail to insert page, do error handling. */
+		/* 6. 복사 실패 시 새로운 페이지 반환 후 실패 처리 */
 		palloc_free_page(newpage);
 		return false;
 	}
@@ -247,7 +242,7 @@ __do_fork (void *aux) {
 	struct child_status *cs = (struct child_status *) aux;
 	struct thread *parent = (struct thread *) cs -> parent;
 	struct thread *current = thread_current ();
-	/* TODO: somehow pass the parent_if. (i.e. process_fork()'s if_) */
+	/*  */
 	struct intr_frame *parent_if = parent -> pf;
 	bool succ = true;
 
@@ -269,11 +264,7 @@ __do_fork (void *aux) {
 		goto error;
 #endif
 
-	/* TODO: Your code goes here.
-	 * TODO: Hint) To duplicate the file object, use `file_duplicate`
-	 * TODO:       in include/filesys/file.h. Note that parent should not return
-	 * TODO:       from the fork() until this function successfully duplicates
-	 * TODO:       the resources of parent.*/
+	/* 파일 디스크립터 복사 -> 복사 성공해야만 프로세스 복제 성공이라 볼 수 있음 -> 즉, 세마포어로 시그널 전송해야 함 (fork_sema, fork_success 필요)*/
 	process_init ();
 	
 	for(int i = 0; i < MAX_FD; i++){
@@ -303,6 +294,7 @@ __do_fork (void *aux) {
 	}
 
 error:
+	/* TODO: 만약 파일 복사 중 에러로 반환된다면, 중간에 로딩된 파일을 다시 초기화해야 하나? */
 	cs -> fork_success = false;
 	sema_up(&cs -> fork_sema);
 	thread_exit ();
@@ -363,21 +355,18 @@ process_wait (tid_t child_tid) {
 		}
 		target = list_next(target);
 	}
-
-    if (child == NULL) {
+	/* double wait, 직계 자식이 아니면 -1 리턴*/
+    if (child == NULL || child -> waited == true) {
         return -1;
     }
+	child -> waited = true;
+	sema_down(&child -> wait_sema);
 
-	if(child -> waited == false){
-		child -> waited = true;
-		sema_down(&child -> wait_sema);
-		int status = child -> exit_status;
-		list_remove(&child -> child_elem);
-		free(child);
-		return status;
-	} else {
-		return -1;
-	}
+	int status = child -> exit_status;
+	list_remove(&child -> child_elem);
+
+	free(child);
+	return status;
 
 }
 
@@ -403,7 +392,7 @@ process_exit (void) {
 	}
 	process_cleanup ();
 
-	/* 부모가 자식보다 먼저 죽으면 직계 자식의 자식 관련 구조체 제거*/
+	/* 부모가 자식보다 먼저 죽으면 직계 자식의 자식 관련 구조체 제거 -> 추후 고아 프로세스 로직으로 대체예정(사용 금지)*/
 	// struct list_elem *e = list_begin(&curr -> child_list);
 	// while(e != list_end(&curr -> child_list)){
 	// 	struct child_status *child_stat = list_entry(e, struct child_status, child_elem);

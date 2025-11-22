@@ -328,6 +328,7 @@ static bool remove(const char *file){
 	return result;
 }
 
+
 /* TODO : 혹시 시작 주소 다음 바이트에 문제가 생기면 사용하기 */
 // static bool check_buffer(void *buffer, int length) {
 //     for (int i = 0; i < length; i++) {

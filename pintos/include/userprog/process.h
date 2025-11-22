@@ -6,7 +6,7 @@
 struct child_status{
 	int exit_status;                    // 종료 상태 (기본값 -1)
 	tid_t tid; 							// 자식의 tid;
-	bool waited;					    // double wait 차단
+	bool waited;					    // double wait 차단을 위한 플래그
 	bool exited;						// 자식의 종료 여부 
 	bool fork_success;					// 자식의 성공 / 실패 상태 
 	struct semaphore wait_sema;         // wait 동기화

@@ -35,6 +35,16 @@ static bool remove (const char *file);
 static int64_t get_user(const uint8_t *uadder);
 static bool put_user(uint8_t *udst, uint8_t byte);
 
+// System call handler functions
+void halt(void);
+void exit(int status);
+bool create(const char *file, unsigned initial_size);
+int write(int fd, const void *buffer, unsigned length);
+int open(const char *file);
+int read (int fd, void *buffer, unsigned length);
+int filesize(int fd);
+void close (int fd);
+
 /* System call.
  *
  * Previously system call services was handled by the interrupt handler
@@ -189,6 +199,16 @@ write (int fd, const void *buffer, unsigned length){
 	if(fd == 1){
 		putbuf(buffer, length);
 		return length;
+	}else{
+		if(fd < 3 || fd > 64){
+			exit(-1);
+		}
+		struct file *file = curr->fdt[fd];
+		if (file == NULL) {
+        	exit(-1);
+    	}
+
+		return file_write(file, buffer, length);
 	}
 	struct file *cur_file = cur -> fd_table[fd];
 	if(cur_file == NULL) return -1;

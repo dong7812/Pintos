@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include "threads/synch.h"
 #include "threads/interrupt.h"
+#include "filesys/file.h"
+
 #ifdef VM
 #include "vm/vm.h"
 #endif
@@ -28,7 +30,8 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* 최저 우선순위. */
 #define PRI_DEFAULT 31                  /* 기본 우선순위. */
 #define PRI_MAX 63                      /* 최고 우선순위. */
-
+/* 파일 디스크립터 최대 */
+#define MAX_FD 128
 /* 커널 스레드 또는 사용자 프로세스.
  *
  * 각 스레드 구조체는 자체 4 kB 페이지에 저장됨. 스레드 구조체
@@ -100,12 +103,18 @@ struct thread {
 	uint64_t *pml4;                     /* 페이지 맵 레벨 4 */
 
 	int exit_status;                    // 종료 상태 (기본값 -1)
-	struct semaphore wait_sema;         // wait 동기화
+	int child_exit_status;              // 자식의 종료 상태를 저장 (wait에서 사용)
+	struct semaphore wait_sema;         // wait 동기화: 자식이 종료를 알림
+	struct semaphore exit_sema;         // exit 동기화: 부모가 exit_status 읽은 후 자식 소멸 허용
+	struct semaphore fork_sema;         // fork 동기화
 	struct thread *parent;              // 부모 프로세스
 	struct list child_list;             // 자식 리스트
 	struct list_elem child_elem;        // 자식 리스트의 요소
-
-	struct file *fdt[64];
+	bool fork_success;                  // fork 성공 여부
+	bool waited;                        // 이미 wait 되었는지 여부
+	struct intr_frame *parent_if;       // fork 시 부모의 interrupt frame (포인터)
+	struct file **fd_table; 			// file descriptor table (one table per process)
+	struct file *close_file;		// deny 권한 설정을 위해서 바로 close하지 않고 file을 thread에 저장
 #endif
 #ifdef VM
 	/* 스레드가 소유한 전체 가상 메모리를 위한 테이블. */

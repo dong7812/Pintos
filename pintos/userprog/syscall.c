@@ -35,6 +35,7 @@ static int exec(const char *cmd_line);
 static void seek(int fd, unsigned position);
 static bool remove(const char *file);
 static int dup2(int oldfd, int newfd);
+static unsigned tell (int fd);
 
 /* System call.
  *
@@ -127,6 +128,10 @@ syscall_handler (struct intr_frame *f) {
             f -> R.rax = dup2((int)f->R.rdi, (int)f->R.rsi);
             break;
 
+		case SYS_TELL:
+			f -> R.rax = tell((int) f-> R.rdi);
+			break;
+
 		default:
 			printf("undefined system call! %llu", syscall_num); 
 			exit(-1);
@@ -151,21 +156,27 @@ static int
 write (int fd, const void *buffer, unsigned length){
 	check_valid_access(buffer);
 	struct thread *cur = thread_current();
-	if(fd <= 0 || fd >= MAX_FD){
+	if(fd < 0 || fd >= MAX_FD){
 		return -1;
 	}
 
-	if(fd == 1){
-		putbuf(buffer, length);
-		return length;
-	}
 	struct file *cur_file = cur -> fd_table[fd];
-	if(cur_file == NULL || is_file_allow_write(cur_file)) return -1;
+	if(cur_file == NULL) return -1;
 
-	lock_acquire(&filesys_lock);
+	if(cur_file == STDIN_FILENO_MARKER){
+		return -1;
+	}
+
+	if (cur_file == STDOUT_FILENO_MARKER) {
+    	putbuf(buffer, length);
+		return length;
+  	}
+
+	if (is_file_allow_write(cur_file)) return -1;
+
+    lock_acquire(&filesys_lock);
 	off_t actual_byte_written = file_write(cur_file, buffer, length);
 	lock_release(&filesys_lock);
-
 	return (int) actual_byte_written;
 };
 
@@ -241,25 +252,38 @@ check_valid_access(void *uaddr){
 
 static void 
 close(int fd){
-	if(fd < 2 || fd >= MAX_FD){
+	if(fd < 0 || fd >= MAX_FD){
 		return;
 	}
+
 	struct thread *cur = thread_current();
-	if(cur -> fd_table[fd] != NULL){
-		lock_acquire(&filesys_lock);
-		file_close(cur -> fd_table[fd]);
-		lock_release(&filesys_lock);
-		cur -> fd_table[fd] = NULL;
-	}
+	struct file *target = cur->fd_table[fd];
+
+	if(target == NULL) return;
+	if (target == STDOUT_FILENO_MARKER || target == STDIN_FILENO_MARKER) return;
+
+	cur->fd_table[fd] = NULL;
+      // 다른 fd가 같은 파일을 참조하는지 확인
+    for (int i = 0; i < MAX_FD; i++) {
+        if (cur->fd_table[i] == target) {
+            return;  // 아직 참조 있음 → file_close 안 함
+        }
+    }
+	lock_acquire(&filesys_lock);
+	file_close(target);
+	lock_release(&filesys_lock);
 }
 
 static int
 filesize(int fd){
 	struct thread *cur = thread_current();
-	if(fd < 2 || fd >= MAX_FD || cur -> fd_table[fd] == NULL){
+	if(fd < 0 || fd >= MAX_FD || cur -> fd_table[fd] == NULL){
 		return -1;
 	}
 	struct file *cur_file = cur -> fd_table[fd];
+
+	if(cur_file == STDIN_FILENO_MARKER || cur_file == STDOUT_FILENO_MARKER)
+		return -1;
 
 	lock_acquire(&filesys_lock);
 	off_t file_len = file_length(cur_file);
@@ -271,11 +295,15 @@ static int
 read(int fd, void *buffer, unsigned size){
 	check_valid_access(buffer);
 	struct thread *cur = thread_current();
-	if(fd < 0 || fd == 1 || fd >= MAX_FD ){
+	if(fd < 0 || fd >= MAX_FD ){
 		return -1;
 	}
 
-	if(fd == 0){	
+	struct file *cur_file = cur->fd_table[fd];
+	if (cur_file == STDOUT_FILENO_MARKER) {
+		return -1;
+	}
+	else if(cur_file == STDIN_FILENO_MARKER){
 		unsigned rd_size = 0;
 		uint8_t *buf = (uint8_t *) buffer;
 
@@ -285,16 +313,17 @@ read(int fd, void *buffer, unsigned size){
 			rd_size++;
 		}
 		return rd_size;
-	} else {
-		struct file *cur_file = cur -> fd_table[fd]; 
-		if(cur_file == NULL){
-			return -1;
-		}
+	}
+	else if (cur_file != NULL) {
+    	struct file *cur_file = cur -> fd_table[fd]; 
+
 		lock_acquire(&filesys_lock);
 		off_t bytes_read = file_read(cur_file, buffer, size);
 		lock_release(&filesys_lock);
 		return bytes_read;
 	}
+	
+	return -1;
 }
 
 static int exec(const char *cmd_line){
@@ -319,6 +348,8 @@ static void seek(int fd, unsigned position){
 	struct thread *cur = thread_current();
 	struct file *target_file = cur -> fd_table[fd];
 	if(target_file == NULL) return;
+
+	if(target_file == STDIN_FILENO_MARKER || target_file == STDOUT_FILENO_MARKER) return;
 	lock_acquire(&filesys_lock);
 	file_seek(target_file, position);
 	lock_release(&filesys_lock);
@@ -347,6 +378,7 @@ dup2(int oldfd, int newfd){
     struct thread *cur = thread_current();
     struct file *old_file = cur->fd_table[oldfd];
     struct file *new_file = cur->fd_table[newfd];
+	struct file *result = NULL;
 
     if(old_file == NULL){
         return -1;
@@ -357,12 +389,37 @@ dup2(int oldfd, int newfd){
     }
 
     if(new_file != NULL){
-        close(newfd);
+    	if (newfd >= 2) {
+        	close(newfd);
+    	} else {
+        	cur->fd_table[newfd] = NULL;  // stdin/stdout은 직접 NULL로
+    	}
     }
 
-    cur->fd_table[newfd] = file_duplicate(old_file);
+	if (old_file == STDIN_FILENO_MARKER || old_file == STDOUT_FILENO_MARKER) {
+    	cur->fd_table[newfd] = old_file;  // 마커 그대로 복사
+	} else {
+		lock_acquire(&filesys_lock);
+		// file_duplicate(old_file);
+		lock_release(&filesys_lock);
+
+    	cur->fd_table[newfd] = old_file;
+	}
 
     return newfd;
+};
+
+static unsigned
+tell (int fd){
+	struct thread *cur = thread_current();
+	struct file *target_file = cur -> fd_table[fd];
+	if(target_file == NULL) return -1;
+	if(target_file == STDIN_FILENO_MARKER || target_file == STDOUT_FILENO_MARKER) return -1;
+	lock_acquire(&filesys_lock);
+	off_t result = file_tell(target_file);
+	lock_release(&filesys_lock);
+
+	return result;
 };
 
 

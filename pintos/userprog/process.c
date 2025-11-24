@@ -24,6 +24,7 @@
 #ifdef VM
 #include "vm/vm.h"
 #include "synch.h"
+#include "include/filesys/file.h"
 #endif
 
 static void process_cleanup (void);
@@ -239,7 +240,6 @@ duplicate_pte (uint64_t *pte, void *va, void *aux) {
  * Hint) parent->tf does not hold the userland context of the process.
  *       That is, you are required to pass second argument of process_fork to
  *       this function. */
-static void
 __do_fork (void *aux) {
 	struct intr_frame if_;
 	/* 기존 aux는 부모 쓰레드 구조체 -> fork 자식 정보를 담은 구조체로 변경 */
@@ -251,7 +251,7 @@ __do_fork (void *aux) {
 	bool succ = true;
 
 	/* 1. Read the cpu context to local stack. */
-	memcpy (&if_, parent_if, sizeof (struct intr_frame));
+	memcpy (&if_, parent->parent_if, sizeof (struct intr_frame));
 
 	/* 2. Duplicate PT */
 	current->pml4 = pml4_create();
@@ -267,6 +267,7 @@ __do_fork (void *aux) {
 	if (!pml4_for_each (parent->pml4, duplicate_pte, parent))
 		goto error;
 #endif
+	process_init ();
 
 	/* 파일 디스크립터 복사 -> 복사 성공해야만 프로세스 복제 성공이라 볼 수 있음 -> 즉, 세마포어로 시그널 전송해야 함 (fork_sema, fork_success 필요)*/
 	process_init ();
@@ -550,6 +551,11 @@ load (const char *file_name, struct intr_frame *if_) {
 	bool success = false;
 	int i;
 
+	if (t->close_file != NULL) {
+    	file_close(t->close_file);
+    	t->close_file = NULL;
+  	}
+
 	// 일단 file_name이 들어오면 copy해서 parsing해보자
 	// palloc으로 file name이 들어가는 single page 하나 생성
 	char *fn_copy = palloc_get_page(0);
@@ -590,7 +596,7 @@ load (const char *file_name, struct intr_frame *if_) {
 	/* ELF 헤더 검증 -> ELF 헤더를 ehdr 구조체에 저장   */
 	if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
 			|| memcmp (ehdr.e_ident, "\177ELF\2\1\1", 7) /* ELF 파일이 맞는지 매직 넘버 확인*/
-			|| ehdr.e_type != 2						
+			|| ehdr.e_type != 2
 			|| ehdr.e_machine != 0x3E // amd64
 			|| ehdr.e_version != 1
 			|| ehdr.e_phentsize != sizeof (struct Phdr)

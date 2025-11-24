@@ -13,6 +13,7 @@
 #include "threads/palloc.h"
 #include "userprog/process.h"
 #include "devices/input.h"
+#include "userprog/process.h"
 #include <string.h>
 
 void syscall_entry (void);
@@ -26,6 +27,11 @@ static void check_valid_access(void *uaddr);
 static void close(int fd);
 static int read(int fd, void *buffer, unsigned size);
 static int filesize(int fd);
+static int wait (tid_t pid);
+static tid_t fork (const char *thread_name, struct intr_frame *if_);
+static int exec (const char *file);
+static void seek (int fd, unsigned position);
+static bool remove (const char *file);
 //static bool check_buffer(void *buffer, int length);
 static int64_t get_user(const uint8_t *uadder);
 static bool put_user(uint8_t *udst, uint8_t byte);
@@ -138,6 +144,41 @@ syscall_handler (struct intr_frame *f) {
 			break;
 	}
 }
+
+static bool
+remove (const char *file){
+	bool result = filesys_remove(file);
+	return result;
+};
+
+static void
+seek (int fd, unsigned position){
+	struct thread *cur = thread_current();
+	if(fd <= 1 || fd >= MAX_FD){
+		return;
+	}
+
+	struct file *cur_file = cur -> fd_table[fd];
+	if(cur_file == NULL) return;
+	
+	file_seek(cur_file, position);
+};
+
+static int
+exec (const char *file){
+	check_valid_access(file);
+	struct thread *cur = thread_current();
+
+	char *fn_copy = palloc_get_page(0);
+	if(fn_copy == NULL){
+		return -1;
+	}
+	strlcpy(fn_copy, file, PGSIZE);
+
+	int result = process_exec(fn_copy);
+
+	return result;
+};
 
 static void 
 halt(void){
